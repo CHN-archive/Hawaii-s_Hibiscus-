@@ -1,0 +1,1300 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hawaii Native Hibiscus Digital Archive</title>
+    
+    <!-- MediaPipe 라이브러리 로드 (제스처 복원) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    
+    <!-- Three.js 및 OrbitControls 라이브러리 로드 (3D 지형 연출용) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <!-- 구글 폰트 링크 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+    
+    <style>
+        /* 기본 레이아웃 스타일 초기화 */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body, html { 
+            height: 100%; 
+            width: 100%; 
+            background-color: #ffffff; 
+            overflow: hidden; 
+            -webkit-font-smoothing: antialiased;
+            font-family: 'Noto Sans KR', sans-serif;
+        }
+
+        /* 미디어파이프 카메라 프레임 수집용 비디오 레이어 (숨김 처리) */
+        .input_video { display: none; }
+        
+        /* 제스처 인식 실시간 피드백 웹캠 화면 (이전 위치인 좌측 하단 복원) */
+        .output_canvas {
+            position: fixed; 
+            bottom: 80px; 
+            left: 80px; 
+            width: 180px; 
+            height: 135px;
+            border-radius: 20px; 
+            z-index: 1000; 
+            background: #000; 
+            display: none; 
+            transform: rotateY(180deg); /* 거울 모드 대응 */
+            border: 2px solid rgba(255, 255, 255, 0.8);
+            object-fit: cover; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+            transition: opacity 0.5s ease;
+        }
+        .output_canvas.active { display: block; }
+
+        /* 페이지 컨테이너 전환 애니메이션 */
+        .page {
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%;
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center; 
+            align-items: center;
+            opacity: 0; 
+            visibility: hidden; 
+            transition: opacity 1.2s cubic-bezier(0.25, 1, 0.5, 1), visibility 1.2s; 
+            z-index: 1;
+            padding: 20px;
+        }
+        .page.active { opacity: 1; visibility: visible; z-index: 10; }
+
+        /* 인트로 텍스트 연출 */
+        .intro-text-group { text-align: center; max-width: 800px; padding: 0 20px; }
+        .en-text { 
+            font-family: 'Avant Garde', Avantgarde, 'Century Gothic', CenturyGothic, 'Montserrat', sans-serif; 
+            font-weight: 500; 
+            font-size: 28px; 
+            color: #111111; 
+            margin-bottom: 24px; 
+            line-height: 1.5; 
+            text-wrap: balance;
+            letter-spacing: -0.01em;
+        }
+        .ko-text { 
+            font-family: 'Noto Sans KR', sans-serif; 
+            font-weight: 300; 
+            font-size: 20px; 
+            color: #555555; 
+            line-height: 1.6;
+            word-break: keep-all;
+        }
+
+        /* 인트로 마지막 페이지 및 탐험 시작 버튼 */
+        #pageD { background-color: #FAF9F5; }
+        .explore-btn { 
+            font-family: 'Avant Garde', Avantgarde, 'Century Gothic', CenturyGothic, 'Montserrat', sans-serif; 
+            font-weight: 500;
+            font-size: 14px; 
+            letter-spacing: 0.5em; 
+            padding: 22px 64px; 
+            border: 1px solid #1a1a1a; 
+            background: transparent; 
+            cursor: pointer; 
+            transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1); 
+            outline: none;
+            text-indent: 0.5em; /* 자간으로 인한 오른쪽 쏠림 방지 정렬 보정 */
+            text-transform: uppercase;
+        }
+        .explore-btn:hover { 
+            background: #1a1a1a; 
+            color: #fff; 
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+        }
+
+        /* 메인 아카이브 인터페이스 */
+        #pageE { display: block; overflow: hidden; padding: 0; background: #ffffff; }
+        
+        /* 6단계 세션 이동용 부모 컨테이너 */
+        .archive-container { 
+            width: 100%; 
+            height: 600%; 
+            transition: transform 1.2s cubic-bezier(0.65, 0, 0.35, 1); 
+        }
+
+        /* 각 히비스커스 섹션 공통 스타일 */
+        .species-section { 
+            width: 100%; 
+            height: 16.666%; 
+            position: relative; 
+            background-repeat: no-repeat;
+            background-position: right 5% center;
+            background-size: contain;
+            transition: transform 1.2s cubic-bezier(0.25, 1, 0.5, 1), filter 1.2s ease, background-position 0.8s ease; 
+        }
+        
+        /* 제스처(손바닥 폈을 때) Blooming 액션 연출 */
+        .species-section.blooming { 
+            transform: scale(1.04); 
+            filter: saturate(1.3) contrast(1.05); 
+        }
+
+        /* 아카이브 텍스트 정보 레이어 오버레이 */
+        .overlay-content { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            padding: 80px 100px; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: space-between; 
+            z-index: 10; 
+            pointer-events: none; /* 배경 제어 방해 차단 */
+        }
+        .top-info { text-align: left; pointer-events: auto; max-width: 550px; }
+        
+        .species-en { 
+            font-family: 'Avant Garde', Avantgarde, 'Century Gothic', CenturyGothic, 'Montserrat', sans-serif; 
+            font-weight: 700; 
+            font-size: 58px; 
+            color: #111111; 
+            margin-bottom: 12px; 
+            line-height: 1.1;
+        }
+        .species-ko { 
+            font-family: 'Noto Sans KR', sans-serif; 
+            font-weight: 400; 
+            font-size: 26px; 
+            color: #444444; 
+            margin-bottom: 40px; 
+            letter-spacing: -0.02em;
+        }
+
+        /* 디테일 인포메이션 팝업 인터페이스 */
+        .info-wrapper { position: relative; display: inline-block; }
+        
+        /* 원형 테두리 굵기 1.5px 수정 (글자 획 두께 500과 완벽 정렬) */
+        .info-btn { 
+            width: 56px; 
+            height: 56px; 
+            border: 1.5px solid #1a1a1a; /* 원본의 정갈하고 얇은 두께 500과 정렬을 위해 1.5px 설정 */
+            border-radius: 50%; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            font-family: 'Avant Garde', Avantgarde, 'Century Gothic', CenturyGothic, 'Montserrat', sans-serif; 
+            font-weight: 500; 
+            font-size: 17px; 
+            cursor: pointer; 
+            color: #1a1a1a; 
+            transition: all 0.4s ease; 
+            background: rgba(255, 255, 255, 0.8);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        }
+        .info-panel { 
+            position: absolute; 
+            top: 50%; 
+            left: 76px; 
+            transform: translateY(-50%) translateX(15px);
+            width: 420px; 
+            background: rgba(18, 18, 18, 0.92); 
+            color: #ffffff; 
+            padding: 35px; 
+            border-radius: 24px; 
+            opacity: 0; 
+            visibility: hidden; 
+            transition: all 0.5s cubic-bezier(0.25, 1, 0.5, 1); 
+            backdrop-filter: blur(15px); 
+            z-index: 50; 
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+        
+        /* 호버 및 제스처 강제 표시 대응 */
+        .info-wrapper:hover .info-panel, 
+        .info-wrapper.force-show .info-panel { 
+            opacity: 1; 
+            visibility: visible; 
+            transform: translateY(-50%) translateX(0); 
+        }
+        .info-wrapper:hover .info-btn, 
+        .info-wrapper.force-show .info-btn { 
+            background: #1a1a1a; 
+            color: #ffffff; 
+            transform: scale(1.05);
+        }
+
+        /* 마지막 하와이 제도 페이지 맞춤형 스타일: info 배경 투명화 및 자연스러운 호버 보장 */
+        .hawaii-section .info-btn {
+            background: transparent;
+            border-color: rgba(26, 26, 26, 0.4);
+        }
+        .hawaii-section .info-wrapper:hover .info-btn,
+        .hawaii-section .info-wrapper.force-show .info-btn {
+            background: #1a1a1a;
+            border-color: #1a1a1a;
+            color: #ffffff;
+        }
+
+        /* 팝업 디테일 텍스트 글자색 완벽 화이트 통일 */
+        .panel-title { 
+            font-family: 'Avant Garde', Avantgarde, 'Century Gothic', CenturyGothic, 'Montserrat', sans-serif;
+            font-weight: 600; 
+            font-size: 18px;
+            margin-bottom: 16px; 
+            border-bottom: 1px solid rgba(255,255,255,0.15); 
+            padding-bottom: 12px; 
+            letter-spacing: 0.05em;
+            color: #ffffff !important; 
+        }
+        .panel-text { 
+            font-size: 15px; 
+            line-height: 1.8; 
+            word-break: keep-all; 
+            color: #ffffff !important; 
+            font-weight: 300;
+        }
+        .panel-text strong {
+            font-weight: 600;
+            color: #ffffff !important;
+        }
+
+        /* 3D 로우폴리곤 캔버스 컨테이너 (화면 중앙 정밀 배치 및 잘림 방지 뷰 최적화) */
+        #canvas3d-container {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 75%;
+            height: 80%;
+            z-index: 5;
+            pointer-events: auto; /* 드래그 회전 인터랙션 활성화 */
+            border-radius: 24px;
+            overflow: hidden;
+            display: block;
+        }
+
+        /* 아카이브 전용 사운드 토글 버튼 (영문 이름과 동일한 높이인 화면 우측 배치) */
+        .sound-btn {
+            position: absolute;
+            top: 80px; /* .species-en 의 상단 여백 80px와 완벽 정렬 */
+            right: 100px; /* .overlay-content 패딩 100px 와 평행 정렬 */
+            width: 58px;
+            height: 58px; /* 영문명 타이틀 라인 높이와 비주얼 정렬 보정 */
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+            z-index: 100;
+            pointer-events: auto;
+            color: #1a1a1a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            opacity: 0.65;
+        }
+        .sound-btn:hover {
+            color: #1a1a1a;
+            opacity: 1;
+            transform: scale(1.15);
+        }
+        .sound-btn svg {
+            width: 26px;
+            height: 26px;
+            transition: transform 0.3s ease;
+        }
+        .sound-btn:active svg {
+            transform: scale(0.9);
+        }
+
+        /* 좌측 무한 인덱싱 내비게이션 도트 */
+        .pagination { 
+            position: absolute; 
+            left: 40px; 
+            top: 50%; 
+            transform: translateY(-50%); 
+            display: flex; 
+            flex-direction: column; 
+            gap: 18px; 
+            z-index: 100; 
+        }
+        .dot { 
+            width: 8px; 
+            height: 8px; 
+            background: rgba(0,0,0,0.15); 
+            border-radius: 50%; 
+            transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1); 
+            cursor: pointer;
+        }
+        .dot.active { 
+            background: #1a1a1a; 
+            transform: scale(2); 
+        }
+
+        /* 미디어 쿼리 - 태블릿 및 모바일 반응형 처리 */
+        @media (max-width: 1024px) {
+            .species-section {
+                background-position: right -10% center;
+                background-size: 55% auto;
+            }
+            .overlay-content { padding: 60px; }
+            .species-en { font-size: 46px; }
+            .sound-btn { top: 60px; right: 60px; }
+            #canvas3d-container {
+                width: 80%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+            }
+        }
+
+        @media (max-width: 768px) {
+            body, html { overflow: hidden; }
+            .species-section {
+                background-position: center bottom 5%;
+                background-size: 85% auto;
+            }
+            .overlay-content {
+                padding: 40px 24px;
+                justify-content: flex-start;
+                gap: 20px;
+            }
+            .top-info {
+                max-width: 100%;
+                background: rgba(255, 255, 255, 0.85);
+                padding: 24px;
+                border-radius: 20px;
+                backdrop-filter: blur(10px);
+                border: 1px solid rgba(0, 0, 0, 0.05);
+                box-shadow: 0 8px 24px rgba(0,0,0,0.05);
+            }
+            .species-en { font-size: 32px; margin-bottom: 6px; }
+            .species-ko { font-size: 18px; margin-bottom: 20px; }
+            .info-btn { width: 50px; height: 50px; font-size: 15px; }
+            .info-panel {
+                left: 0;
+                top: 65px;
+                transform: translateY(10px) translateX(0);
+                width: calc(100vw - 48px);
+                max-width: 340px;
+                padding: 20px;
+            }
+            .info-wrapper:hover .info-panel, 
+            .info-wrapper.force-show .info-panel {
+                transform: translateY(0) translateX(0);
+            }
+            .pagination {
+                left: auto;
+                right: 20px;
+                top: 35%;
+            }
+            .sound-btn {
+                position: absolute;
+                top: 24px;
+                right: 24px;
+                width: 36px;
+                height: 36px;
+            }
+            .sound-btn svg {
+                width: 20px;
+                height: 20px;
+            }
+            .output_canvas {
+                bottom: 20px;
+                left: 20px;
+                width: 120px;
+                height: 90px;
+            }
+            #canvas3d-container {
+                position: absolute;
+                top: auto;
+                bottom: 20px;
+                left: 50%;
+                width: 95%;
+                height: 42%;
+                transform: translateX(-50%);
+                border-radius: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 미디어파이프 분석 인터페이스 리소스 (제스처 분석) -->
+    <video class="input_video"></video>
+    <!-- 제스처 트래킹 실시간 성좌 뼈대 렌더링용 캔버스 (좌측 하단 복원) -->
+    <canvas class="output_canvas" id="gestureCanvas"></canvas>
+
+    <!-- 인트로 소개 시퀀스 -->
+    <section id="pageA" class="page active">
+        <div class="intro-text-group">
+            <p class="en-text">This website was created to preserve the beauty of Hawaii's five native hibiscus species.</p>
+            <p class="ko-text">이 웹사이트는 하와이의 고유종 히비스커스 5종의 아름다움을 보존하기 위해 만들어졌습니다.</p>
+        </div>
+    </section>
+    
+    <section id="pageB" class="page">
+        <div class="intro-text-group">
+            <p class="en-text">It digitally archives their unique flowers and ecology.</p>
+            <p class="ko-text">다섯가지의 독특한 꽃과 생태를 디지털 아카이빙으로 보존합니다.</p>
+        </div>
+    </section>
+    
+    <section id="pageC" class="page">
+        <div class="intro-text-group">
+            <p class="en-text">Explore the site to enjoy detailed information, photos, and stories.</p>
+            <p class="ko-text">사이트를 탐험하며 상세정보, 사진과 스토리를 즐겨보세요.</p>
+        </div>
+    </section>
+    
+    <section id="pageD" class="page">
+        <button id="exploreBtn" class="explore-btn">EXPLORE</button>
+    </section>
+
+    <!-- 메인 탐험 아카이브 페이지 (우측 상단에 연동된 사운드 버튼 탑재) -->
+    <section id="pageE" class="page">
+        
+        <!-- 실시간 앰비언트 사운드 온/오프 토글 버튼 (우측 상단 정렬 및 라인아트 SVG) -->
+        <button id="soundBtn" class="sound-btn" aria-label="Toggle Sound">
+            <!-- 기본값은 음소거 상태 (Muted Line-art Icon) -->
+            <svg id="soundIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+                <line x1="22" y1="9" x2="16" y2="15"></line>
+                <line x1="16" y1="9" x2="22" y2="15"></line>
+            </svg>
+        </button>
+
+        <!-- 좌측 페이징 버튼 -->
+        <div class="pagination">
+            <div class="dot active"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+        </div>
+
+        <!-- 아카이빙 컨테이너 -->
+        <div class="archive-container" id="archiveContainer">
+            
+            <!-- 1. Hibiscus brackenridgei (yellow.jpg) -->
+            <div class="species-section" style="background-color: #ffffff; background-image: url('yellow.png');">
+                <div class="overlay-content">
+                    <div class="top-info">
+                        <h2 class="species-en">Hawaii Native Hibiscus Digital Archive</h2>
+                        <p class="species-ko">마오 하우 헤레 (Maʻo hau hele)</p>
+                        <div class="info-wrapper">
+                            <div class="info-btn">info</div>
+                            <div class="info-panel">
+                                <div class="panel-title">Details</div>
+                                <p class="panel-text">
+                                    <strong>자생지:</strong> 하와이 전역 건조림·관목지 (해발 120~800m)<br>
+                                    <strong>특징:</strong> 하와이 공식 주화(州花)로 지정된 선명한 노란색의 아름다운 꽃입니다. 야생 개체수가 극히 적어 전 세계적인 멸종위기종 보호법의 보살핌을 받고 있습니다.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Hibiscus arnottianus (white.jpg) -->
+            <div class="species-section" style="background-color: #ffffff; background-image: url('white.png');">
+                <div class="overlay-content">
+                    <div class="top-info">
+                        <h2 class="species-en">Hibiscus arnottianus</h2>
+                        <p class="species-ko">코키오 케오케오 (Kokiʻo keʻokeʻo)</p>
+                        <div class="info-wrapper">
+                            <div class="info-btn">info</div>
+                            <div class="info-panel">
+                                <div class="panel-title">Details</div>
+                                <p class="panel-text">
+                                    <strong>자생지:</strong> 오아후 및 몰로카이 섬의 다습한 산악 열대우림<br>
+                                    <strong>특징:</strong> 순백의 꽃잎 위로 대조를 이루며 뻗어 나온 붉은 수술대가 기막힌 시각적 대조를 연출합니다. 하와이 고유종 중 보기 드물게 매혹적인 향기를 머금고 있습니다.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. Hibiscus waimeae (white.jpg - 좌우반전 디자인 효과) -->
+            <div class="species-section" style="background-color: #ffffff; background-image: url('white.png'); transform: scaleX(-1); /* 시각적 다양성을 위한 대칭 연출 */">
+                <!-- 텍스트 레이아웃은 정상 방향 유지를 위해 다시 scaleX(-1) 적용 -->
+                <div class="overlay-content" style="transform: scaleX(-1);">
+                    <div class="top-info">
+                        <h2 class="species-en">Hibiscus waimeae</h2>
+                        <p class="species-ko">와이메아 코키오 (Kauai Kokiʻo)</p>
+                        <div class="info-wrapper">
+                            <div class="info-btn">info</div>
+                            <div class="info-panel">
+                                <div class="panel-title">Details</div>
+                                <p class="panel-text">
+                                    <strong>자생지:</strong> 카우아이 섬의 울창한 와이메아 캐년 일대<br>
+                                    <strong>특징:</strong> 해 질 녘이 되면 은은한 달콤한 잔향을 피워내는 독특한 백색 히비스커스입니다. 오직 카우아이 섬의 비바람 가득한 계곡 절벽에서만 자생합니다.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. Hibiscus clayi (red.jpg) -->
+            <div class="species-section" style="background-color: #ffffff; background-image: url('red.png');">
+                <div class="overlay-content">
+                    <div class="top-info">
+                        <h2 class="species-en">Hibiscus clayi</h2>
+                        <p class="species-ko">코키오 울라울라 (Kokiʻo ʻulaʻula)</p>
+                        <div class="info-wrapper">
+                            <div class="info-btn">info</div>
+                            <div class="info-panel">
+                                <div class="panel-title">Details</div>
+                                <p class="panel-text">
+                                    <strong>자생지:</strong> 카우아이 섬의 Nounou 산맥 건조 삼림<br>
+                                    <strong>특징:</strong> 꽃잎이 뒤쪽으로 강하게 휘어져 우아한 선을 그리는 선명한 다크 레드의 꽃입니다. 생태 파괴 및 외래종 유입으로 자생지 파괴를 겪고 있는 소중한 희귀종입니다.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5. Hibiscus kokio (orange.jpg) -->
+            <div class="species-section" style="background-color: #ffffff; background-image: url('orange.png');">
+                <div class="overlay-content">
+                    <div class="top-info">
+                        <h2 class="species-en">Hibiscus kokio</h2>
+                        <p class="species-ko">코키오 울라 (Kokiʻo ʻula)</p>
+                        <div class="info-wrapper">
+                            <div class="info-btn">info</div>
+                            <div class="info-panel">
+                                <div class="panel-title">Details</div>
+                                <p class="panel-text">
+                                    <strong>자생지:</strong> 하와이 여러 주요 제섬의 건조 및 다습 지역<br>
+                                    <strong>특징:</strong> 주황색부터 어두운 붉은색에 이르는 스펙트럼의 독특한 꽃을 피웁니다. 하와이 토착 조류들에게 아주 달콤하고 풍부한 꿀 공급원 역할을 담당합니다.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 6. The Hawaiian Islands (종합 에코 로드맵) -->
+            <div class="species-section hawaii-section" style="background: #FAFAF7;">
+                <!-- 3D 로우폴리곤 하와이 제도 지형 컨테이너 내장 (화면 정중앙 정렬) -->
+                <div id="canvas3d-container"></div>
+                
+                <div class="overlay-content">
+                    <div class="top-info">
+                        <h2 class="species-en">The Hawaiian Islands</h2>
+                        <p class="species-ko">하와이 제도 (The Aloha State)</p>
+                        <div class="info-wrapper">
+                            <div class="info-btn">info</div>
+                            <div class="info-panel">
+                                <div class="panel-title">Hawaii Ecology</div>
+                                <p class="panel-text">
+                                    태평양 한가운데 고립된 지리적 조건 덕분에, 하와이의 히비스커스는 독특한 진화적 여정을 거쳐 각 섬만의 신비로운 형질과 생명력을 지니게 되었습니다. 이 유산을 지키는 일은 우리의 막중한 책무입니다.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // 주요 엘리먼트 셀렉션
+            const intros = [
+                document.getElementById('pageA'), 
+                document.getElementById('pageB'), 
+                document.getElementById('pageC'), 
+                document.getElementById('pageD')
+            ];
+            const pageE = document.getElementById('pageE');
+            const exploreBtn = document.getElementById('exploreBtn');
+            const archiveContainer = document.getElementById('archiveContainer');
+            const dots = document.querySelectorAll('.dot');
+            const sections = document.querySelectorAll('.species-section');
+            const infoWrappers = document.querySelectorAll('.info-wrapper');
+            const videoElement = document.querySelector('.input_video');
+            const canvasElement = document.getElementById('gestureCanvas');
+            const canvasCtx = canvasElement.getContext('2d');
+            const soundBtn = document.getElementById('soundBtn');
+
+            let currentIntroIdx = 0;
+            let currentArchiveIdx = 0;
+            let isScrolling = false;
+            let cameraStarted = false;
+            let infoCooldown = false;
+            
+            // 검지 스와이프 제스처 관련 상태값
+            let lastIndexY = null;
+            let swipeCooldown = false;
+
+            // 실시간 앰비언트 사운드 신시사이저 변수
+            let audioCtx = null;
+            let noiseNode = null;
+            let filterNode = null;
+            let gainNode = null;
+            let isMuted = true;
+
+            // 볼륨 조절 아이콘 리소스 (라인아트형 SVG 템플릿 - 원형 아웃라인 없음)
+            const muteIcon = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+                    <line x1="22" y1="9" x2="16" y2="15"></line>
+                    <line x1="16" y1="9" x2="22" y2="15"></line>
+                </svg>`;
+            const playIcon = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+                </svg>`;
+
+            // 1. 인트로 페이지 타이머 기반 슬라이딩 전환 로직
+            function nextIntro() {
+                if (currentIntroIdx < 3) {
+                    intros[currentIntroIdx].classList.remove('active');
+                    currentIntroIdx++;
+                    setTimeout(() => {
+                        intros[currentIntroIdx].classList.add('active');
+                    }, 100);
+                    if (currentIntroIdx < 3) {
+                        setTimeout(nextIntro, 5000);
+                    }
+                }
+            }
+            // 최초 인트로 전환 예약 실행
+            setTimeout(nextIntro, 5000);
+
+            // 2. EXPLORE 버튼 클릭 시 메인 아카이브로 전환 및 미디어파이프 이식 시작
+            exploreBtn.addEventListener('click', () => {
+                intros[3].classList.remove('active');
+                setTimeout(() => { 
+                    pageE.classList.add('active'); 
+                    initHandsTracking(); 
+                    initThreeDScene(); // Three.js 3D 환경 구축 시작
+                }, 800);
+            });
+
+            // 3. 아카이브 스크롤(트랜지션) 전환 제어
+            function scrollArchive(index) {
+                if (isScrolling) return;
+                isScrolling = true; 
+                currentArchiveIdx = index;
+                
+                // 컨테이너 Y축 이동 연산
+                archiveContainer.style.transform = `translateY(-${currentArchiveIdx * 16.666}%)`;
+                
+                // 페이지 도트 활성화 업데이트
+                dots.forEach((d, i) => d.classList.toggle('active', i === index));
+                
+                // 정보 모달 초기화
+                infoWrappers.forEach(w => w.classList.remove('force-show'));
+                
+                // 전환 쿨타임 설정
+                setTimeout(() => {
+                    isScrolling = false;
+                }, 1300);
+            }
+
+            // 마우스 휠 감지식 슬라이더 이벤트 바인딩
+            window.addEventListener('wheel', (e) => {
+                if (!pageE.classList.contains('active') || isScrolling || Math.abs(e.deltaY) < 30) return;
+                if (e.deltaY > 0 && currentArchiveIdx < 5) {
+                    scrollArchive(currentArchiveIdx + 1);
+                } else if (e.deltaY < 0 && currentArchiveIdx > 0) {
+                    scrollArchive(currentArchiveIdx - 1);
+                }
+                e.preventDefault();
+            }, { passive: false });
+
+            // 데스크톱 키보드 방향키 바인딩
+            window.addEventListener('keydown', (e) => {
+                if (!pageE.classList.contains('active') || isScrolling) return;
+                if (e.key === 'ArrowDown' && currentArchiveIdx < 5) {
+                    scrollArchive(currentArchiveIdx + 1);
+                    e.preventDefault();
+                } else if (e.key === 'ArrowUp' && currentArchiveIdx > 0) {
+                    scrollArchive(currentArchiveIdx - 1);
+                    e.preventDefault();
+                }
+            });
+
+            // 모바일 터치 스와이프 제스처 바인딩
+            let touchStartY = 0;
+            let touchEndY = 0;
+            pageE.addEventListener('touchstart', (e) => {
+                touchStartY = e.changedTouches[0].screenY;
+            }, { passive: true });
+
+            pageE.addEventListener('touchend', (e) => {
+                touchEndY = e.changedTouches[0].screenY;
+                handleSwipe();
+            }, { passive: true });
+
+            function handleSwipe() {
+                if (isScrolling) return;
+                const swipeThreshold = 50; // 인식할 최소 드래그 픽셀
+                const deltaY = touchStartY - touchEndY;
+                
+                if (deltaY > swipeThreshold && currentArchiveIdx < 5) {
+                    scrollArchive(currentArchiveIdx + 1); // 아래로 스크롤
+                } else if (deltaY < -swipeThreshold && currentArchiveIdx > 0) {
+                    scrollArchive(currentArchiveIdx - 1); // 위로 스크롤
+                }
+            }
+
+            // 도트 클릭 내비게이션 바인딩
+            dots.forEach((dot, index) => {
+                dot.addEventListener('click', () => {
+                    if (index !== currentArchiveIdx) {
+                        scrollArchive(index);
+                    }
+                });
+            });
+
+            // 제스처 스와이프 쿨타임
+            function triggerSwipeCooldown() {
+                swipeCooldown = true;
+                lastIndexY = null;
+                setTimeout(() => { swipeCooldown = false; }, 1400);
+            }
+
+            // 제스처 모달 제어 쿨타임
+            function triggerInfoCooldown() {
+                infoCooldown = true;
+                setTimeout(() => { infoCooldown = false; }, 1200);
+            }
+
+            // 4. Web Audio API를 활용한 가상 하와이 파도/해변 앰비언트 사운드 신시사이저
+            function initHawaiiAudio() {
+                if (audioCtx) return;
+                
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                
+                const bufferSize = 2 * audioCtx.sampleRate;
+                const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const output = noiseBuffer.getChannelData(0);
+                
+                let b0, b1, b2, b3, b4, b5, b6;
+                b0 = b1 = b2 = b3 = b4 = b5 = b6 = 0.0;
+                
+                for (let i = 0; i < bufferSize; i++) {
+                    const white = Math.random() * 2 - 1;
+                    b0 = 0.99886 * b0 + white * 0.0555179;
+                    b1 = 0.99332 * b1 + white * 0.0750759;
+                    b2 = 0.96900 * b2 + white * 0.1538520;
+                    b3 = 0.86650 * b3 + white * 0.3104856;
+                    b4 = 0.55000 * b4 + white * 0.5329522;
+                    b5 = -0.7616 * b5 - white * 0.0168980;
+                    output[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362;
+                    output[i] *= 0.11; 
+                    b6 = white * 0.115926;
+                }
+                
+                noiseNode = audioCtx.createBufferSource();
+                noiseNode.buffer = noiseBuffer;
+                noiseNode.loop = true;
+                
+                filterNode = audioCtx.createBiquadFilter();
+                filterNode.type = 'lowpass';
+                filterNode.frequency.value = 350;
+                filterNode.Q.value = 1.2;
+                
+                gainNode = audioCtx.createGain();
+                gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+                
+                noiseNode.connect(filterNode);
+                filterNode.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                noiseNode.start(0);
+                
+                function modulateOceanWaves() {
+                    if (!audioCtx) return;
+                    const now = audioCtx.currentTime;
+                    const cycle = 8; 
+                    const t = now % cycle;
+                    const sinVal = Math.sin((t / cycle) * Math.PI * 2); 
+                    
+                    const targetFreq = 250 + (sinVal + 1) * 175;
+                    filterNode.frequency.setTargetAtTime(targetFreq, now, 1.6);
+                    
+                    const targetGain = isMuted ? 0 : 0.04 + (sinVal + 1) * 0.04;
+                    gainNode.gain.setTargetAtTime(targetGain, now, 1.2);
+                    
+                    setTimeout(modulateOceanWaves, 150);
+                }
+                modulateOceanWaves();
+            }
+
+            // 사운드 버튼 클릭 토글 이벤트
+            soundBtn.addEventListener('click', () => {
+                if (!audioCtx) {
+                    initHawaiiAudio();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                
+                isMuted = !isMuted;
+                
+                if (isMuted) {
+                    gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.4);
+                    soundBtn.innerHTML = muteIcon;
+                } else {
+                    gainNode.gain.setTargetAtTime(0.08, audioCtx.currentTime, 0.4);
+                    soundBtn.innerHTML = playIcon;
+                }
+            });
+
+            // 5. MediaPipe Hands 제스처 결과 해석 핸들러 (손 뼈대 시각화 추가 및 좌우반전 감지 고도화)
+            function onResults(results) {
+                canvasCtx.save();
+                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+                
+                // 거울 모드 대응 처리를 위해 비디오 프레임 그리기
+                canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+                
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    // 미디어파이프 관절 연결선 수동 매핑 (독립 렌더링 방식)
+                    const connections = [
+                        [0, 1], [1, 2], [2, 3], [3, 4],       // 엄지
+                        [0, 5], [5, 6], [6, 7], [7, 8],       // 검지
+                        [5, 9], [9, 10], [10, 11], [11, 12],  // 중지
+                        [9, 13], [13, 14], [14, 15], [15, 16],// 약지
+                        [13, 17], [17, 18], [18, 19], [19, 20],// 새끼
+                        [0, 17]                               // 손바닥 베이스
+                    ];
+
+                    for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                        const landmarks = results.multiHandLandmarks[i];
+                        const handedness = results.multiHandedness[i]?.label || 'Right';
+                        
+                        // --- 실시간 손 뼈대(Skeletal) 드로잉 구현 (순백색 발광 성좌 테마 적용) ---
+                        // 1. 관절 연결뼈 그리기 (순백색 발광 라인)
+                        connections.forEach(([p1, p2]) => {
+                            const pt1 = landmarks[p1];
+                            const pt2 = landmarks[p2];
+                            if (pt1 && pt2) {
+                                canvasCtx.beginPath();
+                                canvasCtx.moveTo(pt1.x * canvasElement.width, pt1.y * canvasElement.height);
+                                canvasCtx.lineTo(pt2.x * canvasElement.width, pt2.y * canvasElement.height);
+                                canvasCtx.strokeStyle = 'rgba(255, 255, 255, 0.95)'; // 완전한 흰색으로 설정
+                                canvasCtx.lineWidth = 3.5;
+                                canvasCtx.shadowColor = '#ffffff'; // 백색 글로우 발광 효과
+                                canvasCtx.shadowBlur = 4;
+                                canvasCtx.stroke();
+                            }
+                        });
+
+                        // 2. 관절 마디 점 그리기 (순백색 글로우 도트)
+                        landmarks.forEach(pt => {
+                            canvasCtx.beginPath();
+                            canvasCtx.arc(pt.x * canvasElement.width, pt.y * canvasElement.height, 4, 0, 2 * Math.PI);
+                            canvasCtx.fillStyle = '#ffffff'; 
+                            canvasCtx.shadowColor = '#ffffff';
+                            canvasCtx.shadowBlur = 5;
+                            canvasCtx.fill();
+                        });
+                        
+                        // 다른 그래픽 소스 오염 방지를 위해 섀도우 블러 초기화
+                        canvasCtx.shadowBlur = 0;
+
+                        // 관절 랜드마크 데이터 추출
+                        const wrist = landmarks[0];
+                        const thumbTip = landmarks[4];
+                        const indexTip = landmarks[8];
+                        const middleTip = landmarks[12];
+                        const ringTip = landmarks[16];
+                        const pinkyTip = landmarks[20];
+                        const middleMCP = landmarks[9];
+                        
+                        const getDist = (p1, p2) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
+                        const scale = getDist(wrist, middleMCP);
+                        
+                        const indexExt = getDist(indexTip, wrist) / scale;
+                        const middleExt = getDist(middleTip, wrist) / scale;
+                        const ringExt = getDist(ringTip, wrist) / scale;
+                        const pinkyExt = getDist(pinkyTip, wrist) / scale;
+                        const thumbExt = getDist(thumbTip, wrist) / scale;
+                        
+                        // [모션 1] 꽃 개화/폐화 판단 기준 (손바닥 펴기/쥐기)
+                        const isOpenHand = (indexExt > 1.6 && middleExt > 1.6 && ringExt > 1.6 && pinkyExt > 1.6);
+                        const isFist = (indexExt < 1.35 && middleExt < 1.35 && ringExt < 1.35 && pinkyExt < 1.35);
+
+                        if (isOpenHand) {
+                            sections[currentArchiveIdx].classList.add('blooming');
+                        } else if (isFist) {
+                            sections[currentArchiveIdx].classList.remove('blooming');
+                        }
+
+                        // [모션 2] 정보 열람 (샤카 사인 open / 손목을 돌려 좌우반전(손등)했을 때 close)
+                        const isShakaGesture = (thumbExt > 1.4 && pinkyExt > 1.5 && indexExt < 1.3 && middleExt < 1.3 && ringExt < 1.3);
+                        
+                        if (isShakaGesture && !infoCooldown) {
+                            // 엄지와 새끼의 정렬 위치 분석을 통해 손바닥 상태(Open)와 손목 회전을 통한 손등 상태(Close) 체크
+                            // 카메라가 거울상인 점을 반영한 축 정밀 검출
+                            const isPalmFacing = (handedness === 'Right') ? (thumbTip.x > pinkyTip.x) : (thumbTip.x < pinkyTip.x);
+                            const isBackFacing = (handedness === 'Right') ? (thumbTip.x < pinkyTip.x) : (thumbTip.x > pinkyTip.x);
+                            
+                            if (isPalmFacing) {
+                                // 손바닥을 펼쳐 샤카 사인을 보였을 때 -> 정보창 활성화
+                                if (!infoWrappers[currentArchiveIdx].classList.contains('force-show')) {
+                                    infoWrappers[currentArchiveIdx].classList.add('force-show');
+                                    triggerInfoCooldown();
+                                }
+                            } else if (isBackFacing) {
+                                // 손목을 뒤집어 손등 방향으로 좌우 좌표 반전이 일어났을 때 -> 정보창 닫기
+                                if (infoWrappers[currentArchiveIdx].classList.contains('force-show')) {
+                                    infoWrappers[currentArchiveIdx].classList.remove('force-show');
+                                    triggerInfoCooldown();
+                                }
+                            }
+                        }
+
+                        // [모션 3] 페이지 이동 (검지 손가락으로 쓸어내리기/쓸어올리기 위아래)
+                        const isIndexOnly = (indexExt > 1.5 && middleExt < 1.3 && ringExt < 1.3 && pinkyExt < 1.3);
+                        
+                        if (isIndexOnly) {
+                            if (lastIndexY !== null && !swipeCooldown) {
+                                const dy = indexTip.y - lastIndexY; 
+                                const swipeThreshold = 0.12; 
+                                
+                                if (dy > swipeThreshold) { 
+                                    if (currentArchiveIdx < 5) {
+                                        scrollArchive(currentArchiveIdx + 1);
+                                        triggerSwipeCooldown();
+                                    }
+                                } else if (dy < -swipeThreshold) { 
+                                    if (currentArchiveIdx > 0) {
+                                        scrollArchive(currentArchiveIdx - 1);
+                                        triggerSwipeCooldown();
+                                    }
+                                }
+                            }
+                            lastIndexY = indexTip.y;
+                        } else {
+                            lastIndexY = null;
+                        }
+                    }
+                }
+                canvasCtx.restore();
+            }
+
+            // 6. 미디어파이프 트래킹 초기화 (웹캠 켜기 및 활성화)
+            async function initHandsTracking() {
+                if (cameraStarted) return;
+                
+                const hands = new Hands({
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+                });
+                
+                hands.setOptions({
+                    maxNumHands: 1,
+                    modelComplexity: 0, 
+                    minDetectionConfidence: 0.6,
+                    minTrackingConfidence: 0.6
+                });
+                
+                hands.onResults(onResults);
+                
+                const camera = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await hands.send({ image: videoElement });
+                    },
+                    width: 320,
+                    height: 240
+                });
+                
+                try {
+                    await camera.start();
+                    cameraStarted = true;
+                    canvasElement.width = 320;
+                    canvasElement.height = 240;
+                    canvasElement.classList.add('active');
+                } catch (err) {
+                    console.error("카메라를 실행하는 중 오류가 발생했습니다:", err);
+                }
+            }
+
+            // 7. 하와이 제도 3D 로우폴리곤 씬 연출 (Three.js 기반)
+            function initThreeDScene() {
+                const container = document.getElementById('canvas3d-container');
+                if (!container) return;
+
+                // 씬, 카메라, 렌더러 정의
+                const scene = new THREE.Scene();
+                
+                const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                renderer.setSize(container.clientWidth, container.clientHeight);
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                container.appendChild(renderer.domElement);
+
+                // 카메라 설정 최적화 (화면 잘림 현상을 막기 위해 FOV와 거리 균형 조절)
+                const camera = new THREE.PerspectiveCamera(38, container.clientWidth / container.clientHeight, 0.1, 100);
+                camera.position.set(0, 7.8, 11.2);
+
+                // 마우스 인터랙션을 위한 궤도 컨트롤 설정 (회전 반경 및 줌 제한)
+                const controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.dampingFactor = 0.05;
+                controls.enablePan = false;
+                controls.minDistance = 6;
+                controls.maxDistance = 15;
+                controls.maxPolarAngle = Math.PI / 2 - 0.05; 
+                controls.minPolarAngle = Math.PI / 6;
+
+                // 조명 설치
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.45);
+                scene.add(ambientLight);
+
+                const sunLight = new THREE.DirectionalLight(0xfff5e6, 1.15);
+                sunLight.position.set(5, 10, 3);
+                sunLight.castShadow = true;
+                sunLight.shadow.mapSize.width = 1024;
+                sunLight.shadow.mapSize.height = 1024;
+                sunLight.shadow.bias = -0.001;
+                scene.add(sunLight);
+
+                // 간접광 연출
+                const hemiLight = new THREE.HemisphereLight(0x90e0ef, 0xffffff, 0.35);
+                hemiLight.position.set(0, 10, 0);
+                scene.add(hemiLight);
+
+                // 하와이 열도를 담을 통합 그룹 생성 및 정적 스케일 다운으로 화면 잘림 완전 극복
+                const archipelago = new THREE.Group();
+                archipelago.scale.setScalar(0.9); // 전체 섬 군도를 한단계 작게 스케일하여 잘림 제거
+                scene.add(archipelago);
+
+                // 바다 플레이트 생성 (원형 바닥판)
+                const seaGeo = new THREE.CylinderGeometry(5.2, 5.2, 0.15, 32);
+                const seaMat = new THREE.MeshStandardMaterial({ 
+                    color: 0x0a85c2, 
+                    flatShading: true,
+                    transparent: true,
+                    opacity: 0.85,
+                    roughness: 0.15
+                });
+                const sea = new THREE.Mesh(seaGeo, seaMat);
+                sea.position.y = -0.075;
+                sea.receiveShadow = true;
+                archipelago.add(sea);
+
+                // [중요] 지형의 밝기를 기존 올리브그린 대비 약 10% 정도 차분하게 톤다운시킨 옅은 올리브그린 (요청 반영)
+                const landMaterial = new THREE.MeshStandardMaterial({ 
+                    color: 0x819675, // 옅은 올리브그린에서 10% 어둡게 최적 조율한 내추럴 올리브그린
+                    flatShading: true, 
+                    roughness: 0.95,
+                    metalness: 0.05
+                });
+                const beachMaterial = new THREE.MeshStandardMaterial({
+                    color: 0xe9d8b6, // 모래사장 역시 부드러운 옅은 샌드베이지로 유지
+                    flatShading: true,
+                    roughness: 0.9
+                });
+                const volcanoMaterial = new THREE.MeshStandardMaterial({
+                    color: 0x545763,
+                    flatShading: true,
+                    roughness: 0.9
+                });
+                const snowMaterial = new THREE.MeshStandardMaterial({
+                    color: 0xffffff,
+                    flatShading: true,
+                    roughness: 0.7
+                });
+
+                // [중요] 폴리곤 사이 벌어짐 현상(Gaps)을 완벽히 교정하는 정점 변형 알고리즘
+                function createPerturbedGeometry(geometry, maxOffset) {
+                    const pos = geometry.attributes.position;
+                    const temp = new THREE.Vector3();
+                    const vertexMap = {}; // 좌표 공간 맵핑을 통해 경계선상의 공유 정점들을 동기화
+                    
+                    for (let i = 0; i < pos.count; i++) {
+                        temp.fromBufferAttribute(pos, i);
+                        // 부동소수점 오차에 영향 받지 않도록 1/1000 단위 정밀도 정수화 키 생성
+                        const key = `${Math.round(temp.x * 1000)},${Math.round(temp.y * 1000)},${Math.round(temp.z * 1000)}`;
+                        
+                        if (!vertexMap[key]) {
+                            // 같은 자리에 위치한 정점들은 하나의 난수 오프셋을 공유함
+                            vertexMap[key] = {
+                                dx: (Math.random() - 0.5) * maxOffset,
+                                dy: (Math.random() - 0.5) * (maxOffset * 0.4), // 높이 변동폭은 낮춰서 평탄성 확보
+                                dz: (Math.random() - 0.5) * maxOffset
+                            };
+                        }
+                        
+                        const offset = vertexMap[key];
+                        pos.setXYZ(i, temp.x + offset.dx, temp.y + offset.dy, temp.z + offset.dz);
+                    }
+                    geometry.computeVertexNormals();
+                    return geometry;
+                }
+
+                // 모래사장이 포함된 정교한 하와이 섬 생성 헬퍼 함수
+                function createRealisticIsland(radius, height, segments, x, z, scaleX = 1, rotateY = 0) {
+                    const islandGroup = new THREE.Group();
+                    
+                    // 1. 모래사장 베이스 지형 (황금빛 모래)
+                    let beachGeo = new THREE.ConeGeometry(radius * 1.15, height * 0.35, segments);
+                    beachGeo = createPerturbedGeometry(beachGeo, radius * 0.08);
+                    const beachMesh = new THREE.Mesh(beachGeo, beachMaterial);
+                    beachMesh.position.y = (height * 0.35) / 2;
+                    beachMesh.castShadow = true;
+                    beachMesh.receiveShadow = true;
+                    islandGroup.add(beachMesh);
+                    
+                    // 2. 울창한 옅은 올리브그린 육지 지형
+                    let landGeo = new THREE.ConeGeometry(radius, height, segments);
+                    landGeo = createPerturbedGeometry(landGeo, radius * 0.08);
+                    const landMesh = new THREE.Mesh(landGeo, landMaterial);
+                    landMesh.position.y = height / 2;
+                    landMesh.castShadow = true;
+                    landMesh.receiveShadow = true;
+                    islandGroup.add(landMesh);
+                    
+                    islandGroup.position.set(x, 0, z);
+                    islandGroup.scale.x = scaleX;
+                    islandGroup.rotation.y = rotateY;
+                    return islandGroup;
+                }
+
+                // --- 하와이 열도의 실제 지리적 배치를 기반으로 정밀 모델링 구성 (image_914353.jpg 완벽 매핑) ---
+
+                // 1. 니이하우 섬 (Niʻihau - 가장 북서쪽 끝자락의 작고 평평한 섬)
+                const niihau = createRealisticIsland(0.28, 0.15, 5, -3.4, -2.1, 1.2, Math.PI / 4);
+                archipelago.add(niihau);
+
+                // 2. 카우아이 섬 (Kauaʻi - 둥글고 원형에 가까우며 침식된 정원섬)
+                const kauai = createRealisticIsland(0.65, 0.48, 6, -2.8, -1.6);
+                archipelago.add(kauai);
+
+                // 3. 오아후 섬 (Oʻahu - 두 개의 평행 화산 산맥이 골짜기를 감싼 사선 형태)
+                const oahuGroup = new THREE.Group();
+                const oahuRangeLeft = createRealisticIsland(0.46, 0.38, 5, -1.8, -0.9, 1.4, -Math.PI / 6);
+                const oahuRangeRight = createRealisticIsland(0.40, 0.34, 5, -1.4, -0.6, 1.2, -Math.PI / 6);
+                oahuGroup.add(oahuRangeLeft);
+                oahuGroup.add(oahuRangeRight);
+                archipelago.add(oahuGroup);
+
+                // 4. 몰로카이 섬 (Molokaʻi - 동서로 매우 좁고 길쭉하게 늘어선 화산맥 지형)
+                const molokai = createRealisticIsland(0.55, 0.28, 4, -0.4, -0.2, 2.3, -Math.PI / 10);
+                archipelago.add(molokai);
+
+                // 5. 라나이 섬 (Lānaʻi - 몰로카이 아래에 자리 잡은 아늑하고 둥근 섬)
+                const lanai = createRealisticIsland(0.38, 0.26, 5, -0.6, 0.35);
+                archipelago.add(lanai);
+
+                // 6. 카호올라웨 섬 (Kahoʻolawe - 라나이 우측 아래이자 마우이 남서쪽에 위치한 매우 작은 섬)
+                const kahoolawe = createRealisticIsland(0.22, 0.12, 4, 0.1, 0.7, 1.3, -Math.PI / 4);
+                archipelago.add(kahoolawe);
+
+                // 7. 마우이 섬 (Maui - 서마우이 산과 동쪽 할레아칼라가 좁은 평원으로 결합한 특징적인 이중 섬 구조)
+                const mauiGroup = new THREE.Group();
+                const westMauiMtn = createRealisticIsland(0.55, 0.42, 5, 0.5, 0.3);
+                const haleakalaVolcano = createRealisticIsland(0.85, 0.70, 6, 1.1, 0.55, 1.2);
+                mauiGroup.add(westMauiMtn);
+                mauiGroup.add(haleakalaVolcano);
+                archipelago.add(mauiGroup);
+
+                // 8. 하와이 섬 (Hawaiʻi 빅아일랜드 - 가장 동남쪽 끝에 위치한 거대한 다각형 지대와 높은 두 방패화산)
+                const bigIslandGroup = new THREE.Group();
+                
+                // 마우나케아 (Mauna Kea - 하와이 최고봉, 로우폴리 만년설 크라운 배치)
+                const maunaKea = createRealisticIsland(1.5, 1.25, 6, 2.5, 1.5);
+                const snowCapGeo = new THREE.ConeGeometry(0.45, 0.38, 6);
+                const snowCap = new THREE.Mesh(snowCapGeo, snowMaterial);
+                snowCap.position.set(2.5, 1.12, 1.5);
+                bigIslandGroup.add(maunaKea);
+                bigIslandGroup.add(snowCap);
+
+                // 마우나로아 (Mauna Loa - 남서쪽 거대한 면적의 방패화산)
+                const maunaLoa = createRealisticIsland(1.4, 1.05, 6, 3.0, 2.1);
+                bigIslandGroup.add(maunaLoa);
+
+                // 킬라우에아 (Kīlauea - 동쪽 활화산 지각대 및 용암)
+                const kilauea = createRealisticIsland(0.75, 0.32, 5, 3.2, 1.3);
+                kilauea.children[1].material = volcanoMaterial; // 어두운 화석 현무암 톤 대입
+                
+                // 용암분화구 열기 비주얼 라이트
+                const lavaGeo = new THREE.SphereGeometry(0.12, 4, 4);
+                const lavaMat = new THREE.MeshBasicMaterial({ color: 0xff4400 });
+                const lava = new THREE.Mesh(lavaGeo, lavaMat);
+                lava.position.set(3.2, 0.28, 1.3);
+                bigIslandGroup.add(kilauea);
+                bigIslandGroup.add(lava);
+
+                archipelago.add(bigIslandGroup);
+
+                // 9. 로우폴리곤 구름 추가 (바람에 떠다니는 기류 기믹 구현)
+                const cloudGroup = new THREE.Group();
+                const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 1.0 });
+                const cloudPartGeo = new THREE.DodecahedronGeometry(0.2, 0);
+
+                function createCloud(x, y, z) {
+                    const cloud = new THREE.Group();
+                    for(let i=0; i<3; i++) {
+                        const part = new THREE.Mesh(cloudPartGeo, cloudMat);
+                        part.position.set(i * 0.15 - 0.15, (Math.random() - 0.5) * 0.08, (Math.random() - 0.5) * 0.08);
+                        part.scale.setScalar(0.8 + Math.random() * 0.4);
+                        cloud.add(part);
+                    }
+                    cloud.position.set(x, y, z);
+                    return cloud;
+                }
+
+                const cloud1 = createCloud(-2, 1.5, -1);
+                const cloud2 = createCloud(1, 1.8, 0.5);
+                const cloud3 = createCloud(3, 2.1, 2);
+                cloudGroup.add(cloud1, cloud2, cloud3);
+                archipelago.add(cloudGroup);
+
+                // 군도의 미세 수평 오프셋 정렬 보정 (화면 정중앙 뷰 최적화)
+                archipelago.position.set(-0.35, 0, -0.35);
+
+                // 애니메이션 루프 선언 및 실행
+                let angle = 0;
+                function animate() {
+                    requestAnimationFrame(animate);
+
+                    // 군도 전체의 완만한 제자리 자전 회전 운동 (동적인 뷰 보장)
+                    archipelago.rotation.y = Math.sin(angle) * 0.035;
+                    angle += 0.0012;
+
+                    // 구름의 실시간 미세 부유 유동 묘사
+                    cloud1.position.x += 0.0015;
+                    if(cloud1.position.x > 5) cloud1.position.x = -5;
+                    cloud2.position.x += 0.001;
+                    if(cloud2.position.x > 5) cloud2.position.x = -5;
+                    cloud3.position.x += 0.002;
+                    if(cloud3.position.x > 5) cloud3.position.x = -5;
+
+                    controls.update();
+                    renderer.render(scene, camera);
+                }
+
+                // 애니메이션 루프 기동
+                animate();
+
+                // 반응형 레이아웃 대응 리사이저
+                window.addEventListener('resize', () => {
+                    if (!container) return;
+                    camera.aspect = container.clientWidth / container.clientHeight;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(container.clientWidth, container.clientHeight);
+                });
+            }
+        });
+    </script>
+</body>
+</html>
